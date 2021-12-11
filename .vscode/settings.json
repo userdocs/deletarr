@@ -1,0 +1,15 @@
+{
+	"shellformat.flag": "-ci -sr -i 0",
+	"editor.formatOnSave": true,
+	"editor.formatOnPaste": true,
+	"editor.formatOnType": true,
+	"editor.insertSpaces": false,
+	"editor.detectIndentation": false,
+	"shellcheck.useWorkspaceRootAsCwd": true,
+	"shellcheck.enableQuickFix": true,
+	"files.defaultLanguage": "shellscript",
+	"[shellscript]": {
+		"files.eol": "\n",
+		"editor.tabSize": 4
+	},
+}
