@@ -90,8 +90,7 @@ printf '\n%s\n' "Radar download_id history hashes = ${radarr_download_id_array[*
 # Processing - File names and special characters from radarr_movie_path are converted to a regex to match all potential torrents
 # I am not using radarr_movie_title because radarr_movie_path is used for the path and this is more predictable regarding characters
 torrent_name="${radarr_movie_path##*/}"                                      # Some film: Dave's special something - example (2021)
-torrent_name="${torrent_name% *}"                                            # Some film: Dave's special something - example"
-torrent_name="${torrent_name//[ \'\_\:\-]/\.\*}"                             # Some.*film.*.*Dave.*s.*special.*something.*.*.*example
+torrent_name="${torrent_name//[ \(\)\'\_\:\-]/\.\*}"                         # Some.*film.*.*Dave.*s.*special.*something.*.*.*example
 torrent_name="$(printf '%s' "${torrent_name}" | sed -r 's/(\.\*){2,}/.*/g')" # Some.*film.*Dave.*s.*special.*something.*example
 #####################################################################################################################################
 
