@@ -86,24 +86,24 @@ fi
 printf '\n%s\n' "Radar download_id history hashes = ${radarr_download_id_array[*]}" &>> "${log_name}"
 #######################################################################################################
 
-## Movie name processing ############################################################################################################
-# Processing - File names and special characters from radarr_movie_path are converted to a regex to match all potential torrents
-# I am not using radarr_movie_title because radarr_movie_path is used for the path and this is more predictable regarding characters
+## Movie name processing ##########################################################################################################################################
+# Processing - File names and characters from radarr_movie_path are converted to a regex that we will use with case insenstive grep to match all potential torrents
+# I am not using radarr_movie_title because radarr_movie_path is used for the path and this is more predictable regarding characters and has the movie year
 torrent_name="${radarr_movie_path##*/}"                                      # Some film: Dave's special something - example (2021)
-torrent_name="${torrent_name//[ \(\)\'\_\:\-]/\.\*}"                         # Some.*film.*.*Dave.*s.*special.*something.*.*.*example
-torrent_name="$(printf '%s' "${torrent_name}" | sed -r 's/(\.\*){2,}/.*/g')" # Some.*film.*Dave.*s.*special.*something.*example
-#####################################################################################################################################
+torrent_name="${torrent_name//[ \(\)\'\_\:\-]/\.\*}"                         # Some.*film.*.*Dave.*s.*special.*something.*.*.*example.*.*2021.*
+torrent_name="$(printf '%s' "${torrent_name}" | sed -r 's/(\.\*){2,}/.*/g')" # Some.*film.*Dave.*s.*special.*something.*example.*2021.*
+###################################################################################################################################################################
 
 ## logging ########################################################################
 printf '\n%s\n' "regex friendly torrent_name = ${torrent_name}" &>> "${log_name}"
 ###################################################################################
 
-## Qbt index array ###########################################################################################################################################################################################################################################
+## qbt index array ###########################################################################################################################################################################################################################################
 # Set an new array using a list of filtered torrents from the Radarr category. Then search the api for the torrent name and return the line number match for those - then subtract 1 from each to match an index starting from 0
 mapfile -t torrent_hash_index_array < <(curl -sL "${host}:${qbt_port}/api/${qbt_api_version}/torrents/info?filter=completed&category=${category}" | jq -r '.[].name | select( . != null )' | grep -in "${torrent_name}" | cut -d: -f1 | awk '{ print $1 - 1}')
 ##############################################################################################################################################################################################################################################################
 
-## Qbt hash array ##############################################################################################################################################################################
+## qbt hash array ##################################################################################################################################################################################
 # If the index result is not null then create the hash array from the index array else set the array as an empty array
 if [[ -n "${torrent_hash_index_array[*]}" ]]; then
 	for torrent_hash in "${torrent_hash_index_array[@]}"; do
@@ -112,7 +112,7 @@ if [[ -n "${torrent_hash_index_array[*]}" ]]; then
 else
 	torrent_hash_array=()
 fi
-################################################################################################################################################################################################
+####################################################################################################################################################################################################
 
 ## Array processing ###############################################################################################################
 # We want to combine the radrr api output with the qbt api output to create a single list of deduplictaed hashes we want to process
