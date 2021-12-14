@@ -15,29 +15,37 @@ set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 
 ## connection test ############################
 [[ "${radarr_eventtype:=}" == 'Test' ]] && exit
-###############################################
 
-## Env Configuration ####################################################################################################################################
-mkdir -p "${HOME}/.deletarr"        # data folder for log files
-PATH="${HOME}/bin${PATH:+:${PATH}}" # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
-host="http://localhost"             # set your host here
-#########################################################################################################################################################
+## Env Configuration ######################################################################################################################################
+config_dir="${HOME}/.config/deletarr" # set the config directory
+data_dir="${HOME}/.deletarr"          #locationof movie data folders and files
+mkdir -p "${config_dir}"              # make config dirs for logs and history json
+mkdir -p "${data_dir}"                # make data folder for movie folders
+PATH="${HOME}/bin${PATH:+:${PATH}}"   # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
 
-## Qbittorrent API Configuration ################################################################
-qbt_port="8080"      # set your port here
-qbt_api_version="v2" # api version used
-category="radarr"    # your downloader category here - WIP to find a better way to determine this
-#################################################################################################
+## Configuration #####################################################################################################################################
+# You can load these settings from the ~/.config/deletarr/config if it exists otherwise use these defaults
+if [[ -f "${HOME}/.config/deletarr/config" ]]; then
+	# shellcheck source=/dev/null
+	source "${HOME}/.config/deletarr/config"
+else
+	## host Configuration ################################################################################################################
+	host="http://localhost" # set your host here - non https is the supported and recommended method for connection to the api's used here
 
-## Radarr API Configuration #####################
-radarr_port="7878"
-radarr_api_version="v3"
-radarr_api_key=""
-#################################################
+	## Qbittorrent API Configuration ################################################################
+	qbt_port="8080"      # set your port here
+	qbt_api_version="v2" # api version used
+	category="radarr"    # your downloader category here - WIP to find a better way to determine this
 
-## logging ##############################################################################################################################
-[[ -z "${radarr_movie_path}" ]] && log_name="${HOME}/.deletarr/deletarr.log" || log_name="${HOME}/.deletarr/${radarr_movie_path##*/}.log"
-#########################################################################################################################################
+	## Radarr API Configuration #####################
+	radarr_port="7878"
+	radarr_api_version="v3"
+	radarr_api_key=""
+fi
+
+## logging ##############################################################################################################
+# Do no set an extension so that we can use log or json extensions per command using a generic &>> "${log_name}.log/json
+[[ -z "${radarr_movie_path}" ]] && log_name="${config_dir}/deletarr" || log_name="${config_dir}/${radarr_movie_path##*/}"
 
 ## Testing - error function #################################################################################################################################################################################
 # This is a function that detects the PIPESTATUS errors for any element in a single or piped command and will show you the exit status code as well as the index position of the error in the pipe in the log
@@ -48,62 +56,79 @@ _pipe_status() {
 	for return_code in "${return_code[@]}"; do  # loop through the return_code array.
 		return_location="$((return_location + 1))" # start the count, starting from 0 so we get 0,0 > 0,1 > 0,2 and so on.
 		if [[ "${return_code}" -gt '0' ]]; then    # If any indexed value in the array returns as a non 0 number do this.
-			printf '\n%s\n\n' " Pipestatus returned an error at position: ${return_location} with return code: ${return_code}" &>> "${log_name}"
+			printf '\n%s\n\n' "Pipestatus returned an error at position: ${return_location} with return code: ${return_code}" |& tee -a "${log_name}.log"
 			return_code_outcome='1' # set this variable to exit at the end of the function so we can see all errors in the pipe instead of exiting at the first one.
 		fi
 	done
 	[[ "${return_code_outcome}" -eq '1' ]] && exit 1 # if there was any error in the pipe then exit now instead of returning.
 	return                                           # if there were no problems we simply return to the main scrpt and do nothing.
 }
-##############################################################################################################################################################################################################
 
-## get jq ##############################################################################################################################################################################
+## get jq ##################################################################################################################################################################################
 # Will download jq if the command is not detected in the PATH. Otherwise it just logs the version output.
-if ! jq --version &> "${log_name}"; then
-	mkdir -p "${HOME}/bin"                                                                                          # create the bin directory relative to the user running the script
-	wget -O "${HOME}/bin/jq" "https://github.com/stedolan/jq/releases/latest/download/jq-linux64" &>> "${log_name}" # download the the jq Linux binary and place it in the bin directory
-	_pipe_status                                                                                                    # error testing
-	chmod 700 "${HOME}/bin/jq"                                                                                      # make the binary executable to the relative user.
+if ! jq --version &> "${log_name}.log"; then
+	mkdir -p "${HOME}/bin"                                                                                              # create the bin directory relative to the user running the script
+	wget -O "${HOME}/bin/jq" "https://github.com/stedolan/jq/releases/latest/download/jq-linux64" &>> "${log_name}.log" # download the the jq Linux binary and place it in the bin directory
+	_pipe_status                                                                                                        # error testing
+	chmod 700 "${HOME}/bin/jq"                                                                                          # make the binary executable to the relative user.
 fi
-#######################################################################################################################################################################################
+
+## bootstrapping - Radarr API calls ########################################################################################################################################################################
+# Dump the entire history into a json we can use to get the hashes we need
+if [[ "${1}" == "bootstrap" ]]; then
+	# dump the entire history file to work with directly.
+	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history?page=1&pageSize=99999&sortDirection=descending&sortKey=date&apikey=${radarr_api_key}" | jq '.[]' &>> "${log_name}_radarr_history.json"
+	_pipe_status
+
+	# get all movies and set them as compacted json in an array. We will search this for our loop instread of call the api over and over
+	mapfile -t movie_info_array < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie?apikey=${radarr_api_key}" | jq -c '.[]')
+
+	for movie in "${!movie_info_array[@]}"; do
+		movie_path="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.path')"                          # get the path and set it to movie_path
+		mkdir -p "${data_dir}/${movie_path##*/}"                                                           # create the data dir using this path
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${movie_path##*/}/movie_info" # save all info for this movie to the data dir for this movie
+
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.alternateTitles[].movieId' | head -n 1 > "${data_dir}/${movie_path##*/}/movie_id"   # save the id to a file so i can easily get it when i need it.
+		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.alternateTitles[].movieId' | head -n 1)"                                # get the movieId for this film that we ill use to get the unique history
+		jq ".[] | select(.movieId==${movie_id})" "${log_name}_radarr_history.json" 2> /dev/null > "${data_dir}/${movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
+	done
+
+	printf '\n%s\n' "History dumped to: ${log_name}_radarr_history.json"
+	printf '\n%s\n\n' "Movie folders created in ${data_dir} with unique movie info and history jsons per dir"
+	exit
+fi
 
 ## Testing - Safety #########################################################################################
 # if the radarr_movie_path variable is not set - then exit now else log the variable info
 if [[ -z "${radarr_movie_path}" ]]; then
-	printf '\n%s\n\n' " radarr_movie_path is null so it's unsafe not proceed, exiting now with status code 1"
+	printf '\n%s\n\n' "radarr_movie_path is null so it's unsafe not proceed, exiting now with status code 1" |& tee -a "${log_name}.log"
 	exit 1
 else
-	printenv | grep -P "radarr_(.*)=" > "${log_name}"
+	printenv | grep -P "radarr_(.*)=" > "${log_name}.log"
 fi
-#############################################################################################################
 
 ## Radarr API calls ##################################################################################################################################################################################################################################
 # Get any download hashes from the movie history via the radarr_movie_id and set them to an array
 [[ -n "${radarr_movie_id}" ]] && mapfile -t radarr_download_id_array < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history/movie?movieId=${radarr_movie_id}&apikey=${radarr_api_key}" | jq -r '.[].downloadId | select( . != null )')
-######################################################################################################################################################################################################################################################
 
-## logging ############################################################################################
-printf '\n%s\n' "Radar download_id history hashes = ${radarr_download_id_array[*]}" &>> "${log_name}"
-#######################################################################################################
+## logging ##############################################################################################
+printf '\n%s\n' "Radar download_id history hashes = ${radarr_download_id_array[*]}" &>> "${log_name}.log"
 
-## Movie name processing ##########################################################################################################################################
-# Processing - File names and characters from radarr_movie_path are converted to a regex that we will use with case insenstive grep to match all potential torrents
-# I am not using radarr_movie_title because radarr_movie_path is used for the path and this is more predictable regarding characters and has the movie year
+## Movie name processing ############################################################################################################
+# Processing - File names and special characters from radarr_movie_path are converted to a regex to match all potential torrents
+# I am not using radarr_movie_title because radarr_movie_path is used for the path and this is more predictable regarding characters
 torrent_name="${radarr_movie_path##*/}"                                      # Some film: Dave's special something - example (2021)
-torrent_name="${torrent_name//[ \(\)\'\_\:\-]/\.\*}"                         # Some.*film.*.*Dave.*s.*special.*something.*.*.*example.*.*2021.*
-torrent_name="$(printf '%s' "${torrent_name}" | sed -r 's/(\.\*){2,}/.*/g')" # Some.*film.*Dave.*s.*special.*something.*example.*2021.*
-###################################################################################################################################################################
+torrent_name="${torrent_name//[ \(\)\'\_\:\-]/\.\*}"                         # Some.*film.*.*Dave.*s.*special.*something.*.*.*example
+torrent_name="$(printf '%s' "${torrent_name}" | sed -r 's/(\.\*){2,}/.*/g')" # Some.*film.*Dave.*s.*special.*something.*example
 
-## logging ########################################################################
-printf '\n%s\n' "regex friendly torrent_name = ${torrent_name}" &>> "${log_name}"
-###################################################################################
+## logging ##########################################################################
+printf '\n%s\n' "regex friendly torrent_name = ${torrent_name}" &>> "${log_name}.log"
 
-## qbt index array ###########################################################################################################################################################################################################################################
+## Qbt index array ###########################################################################################################################################################################################################################################
 # Set an new array using a list of filtered torrents from the Radarr category. Then search the api for the torrent name and return the line number match for those - then subtract 1 from each to match an index starting from 0
 mapfile -t torrent_hash_index_array < <(curl -sL "${host}:${qbt_port}/api/${qbt_api_version}/torrents/info?filter=completed&category=${category}" | jq -r '.[].name | select( . != null )' | grep -in "${torrent_name}" | cut -d: -f1 | awk '{ print $1 - 1}')
-##############################################################################################################################################################################################################################################################
 
-## qbt hash array ##################################################################################################################################################################################
+## Qbt hash array ##################################################################################################################################################################################
 # If the index result is not null then create the hash array from the index array else set the array as an empty array
 if [[ -n "${torrent_hash_index_array[*]}" ]]; then
 	for torrent_hash in "${torrent_hash_index_array[@]}"; do
@@ -112,42 +137,34 @@ if [[ -n "${torrent_hash_index_array[*]}" ]]; then
 else
 	torrent_hash_array=()
 fi
-####################################################################################################################################################################################################
 
 ## Array processing ###############################################################################################################
 # We want to combine the radrr api output with the qbt api output to create a single list of deduplictaed hashes we want to process
 mapfile -t combined_hash_array < <(printf '%s\n' "${radarr_download_id_array[@]}" "${torrent_hash_array[@]}" | awk '!a[$0]++')
-###################################################################################################################################
 
-## logging ##########################################################################
-printf '\n%s\n\n' "combined_hash_array = ${combined_hash_array[*]}" &>> "${log_name}"
-#####################################################################################
+## logging ##############################################################################
+printf '\n%s\n\n' "combined_hash_array = ${combined_hash_array[*]}" &>> "${log_name}.log"
 
-## Hash processing ##################################################################################################################################################################################################
+## Hash processing loops ##########################
 for torrent_hash in "${combined_hash_array[@]}"; do
 	hash_to_delete="${torrent_hash}"
 
-	## logging ##################################################################################################################################################################################
-	[[ -n ${hash_to_delete} ]] && curl -sL "${host}:${qbt_port}/api/${qbt_api_version}/torrents/info?filter=completed&category=${category}&hashes=${hash_to_delete}" | jq '.[]' &>> "${log_name}"
-	#############################################################################################################################################################################################
+	## logging #######################################################################################################################################################################################
+	[[ -n ${hash_to_delete} ]] && curl -sL "${host}:${qbt_port}/api/${qbt_api_version}/torrents/info?filter=completed&category=${category}&hashes=${hash_to_delete}" | jq '.[]' &>> "${log_name}.json"
 
 	## Testing - Safety ######################################################################################
 	if [[ -z "${hash_to_delete}" ]]; then # safety - if this variable is not set - then exit now
-		printf '\n%s\n\n' " hash_to_delete is null so it's unsafe not proceed, exiting now with status code 1"
+		printf '\n%s\n\n' "hash_to_delete is null so it's unsafe not proceed, exiting now with status code 1" |& tee -a "${log_name}.log"
 		exit 1
 	fi
-	##########################################################################################################
 
 	## Delete torrents via hash list ###########################################################################################################
 	if [[ "${radarr_movie_deletedfiles:=}" == 'True' ]]; then # If the user also selected to delete the movie files and folders via the checkbox
-		## logging ########################################################################
-		printf '\n%s\n\n' "Deleted torrent with hash = ${hash_to_delete}" &>> "${log_name}"
-		###################################################################################
+
+		## logging ############################################################################
+		printf '\n%s\n\n' "Deleted torrent with hash = ${hash_to_delete}" &>> "${log_name}.log"
 
 		## Delete torrents with hahses using the qbt APi ##############################################################
 		# curl -sL "${host}:${qbt_port}/api/${qbt_api_version}/torrents/delete?hashes=${hash_to_delete}&deleteFiles=true"
-		###############################################################################################################
 	fi
-	###########################################################################################################################################
 done
-#####################################################################################################################################################################################################################
