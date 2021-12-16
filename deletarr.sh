@@ -17,11 +17,11 @@ set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 [[ "${radarr_eventtype:=}" == 'Test' ]] && exit
 
 ## Env Configuration ######################################################################################################################################
-config_dir="${HOME}/.config/deletarr" # set the config directory
-data_dir="${HOME}/.deletarr"          #locationof movie data folders and files
-mkdir -p "${config_dir}"              # make config dirs for logs and history json
-mkdir -p "${data_dir}"                # make data folder for movie folders
-PATH="${HOME}/bin${PATH:+:${PATH}}"   # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
+config_dir="${HOME}/.config/deletarr"               # set the config directory
+data_dir="${HOME}/.deletarr"                        #locationof movie data folders and files
+mkdir -p "${config_dir}"                            # make config dirs for logs and history json
+mkdir -p "${data_dir}"                              # make data folder for movie folders
+PATH="${data_dir}/bin:${HOME}/bin${PATH:+:${PATH}}" # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
 
 ## Configuration #####################################################################################################################################
 # You can load these settings from the ~/.config/deletarr/config if it exists otherwise use these defaults
@@ -64,13 +64,22 @@ _pipe_status() {
 	return                                           # if there were no problems we simply return to the main scrpt and do nothing.
 }
 
-## get jq ##################################################################################################################################################################################
+## get jq ################################################################################################################################################################################################################################################################
 # Will download jq if the command is not detected in the PATH. Otherwise it just logs the version output.
 if ! jq --version &> "${log_name}.log"; then
-	mkdir -p "${HOME}/bin"                                                                                              # create the bin directory relative to the user running the script
-	wget -O "${HOME}/bin/jq" "https://github.com/stedolan/jq/releases/latest/download/jq-linux64" &>> "${log_name}.log" # download the the jq Linux binary and place it in the bin directory
-	_pipe_status                                                                                                        # error testing
-	chmod 700 "${HOME}/bin/jq"                                                                                          # make the binary executable to the relative user.
+	case "$(arch)" in
+		x86_64) arch="x86_64-linux-musl.tar.gz" ;;
+		aarch64) arch="aarch64-linux-musl.tar.gz" ;;
+		armhf | armv7*) arch="armv7r-linux-musleabihf.tar.gz" ;;
+		armel | armv5* | armv6* | arm) arch="arm-linux-musleabihf" ;;
+		*)
+			echo "$(arch): This arch is not supported"
+			exit 1
+			;;
+	esac
+	wget -q -O- "https://github.com/userdocs/jq-crossbuild/releases/latest/download/${arch}" | tar -xz --strip-components 1 -C "${data_dir}" jq-completed/bin/jq &>> "${log_name}.log" # download the the jq Linux binary and place it in the bin directory
+	_pipe_status                                                                                                                                                                       # error testing
+	chmod 700 "${data_dir}/bin/jq"                                                                                                                                                     # make the binary executable to the relative user.
 fi
 
 ## bootstrapping - Radarr API calls ########################################################################################################################################################################
@@ -89,7 +98,7 @@ if [[ "${1}" == "bootstrap" ]]; then
 		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${movie_path##*/}/movie_info" # save all info for this movie to the data dir for this movie
 
 		printf '%s' "${movie_info_array[$movie]}" | jq -r '.alternateTitles[].movieId' | head -n 1 > "${data_dir}/${movie_path##*/}/movie_id"   # save the id to a file so i can easily get it when i need it.
-		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.alternateTitles[].movieId' | head -n 1)"                                # get the movieId for this film that we ill use to get the unique history
+		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.alternateTitles[].movieId' | head -n 1)"                                # get the movieId for this film that we will use to get the unique history
 		jq ".[] | select(.movieId==${movie_id})" "${log_name}_radarr_history.json" 2> /dev/null > "${data_dir}/${movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
 	done
 
@@ -97,6 +106,10 @@ if [[ "${1}" == "bootstrap" ]]; then
 	printf '\n%s\n\n' "Movie folders created in ${data_dir} with unique movie info and history jsons per dir"
 	exit
 fi
+
+## on grab #####
+
+## on import ####
 
 ## Testing - Safety #########################################################################################
 # if the radarr_movie_path variable is not set - then exit now else log the variable info
@@ -118,7 +131,7 @@ printf '\n%s\n' "Radar download_id history hashes = ${radarr_download_id_array[*
 # Processing - File names and special characters from radarr_movie_path are converted to a regex to match all potential torrents
 # I am not using radarr_movie_title because radarr_movie_path is used for the path and this is more predictable regarding characters
 torrent_name="${radarr_movie_path##*/}"                                      # Some film: Dave's special something - example (2021)
-torrent_name="${torrent_name//[ \(\)\'\_\:\-]/\.\*}"                         # Some.*film.*.*Dave.*s.*special.*something.*.*.*example
+torrent_name="${torrent_name//[ \[\(\)\'\_\:\-\]]/\.\*}"                     # Some.*film.*.*Dave.*s.*special.*something.*.*.*example
 torrent_name="$(printf '%s' "${torrent_name}" | sed -r 's/(\.\*){2,}/.*/g')" # Some.*film.*Dave.*s.*special.*something.*example
 
 ## logging ##########################################################################
