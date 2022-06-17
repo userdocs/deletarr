@@ -43,6 +43,14 @@ else
 	radarr_api_key=""
 fi
 
+## Testing - Safety #########################################################################################################
+# Make sure the API responds before we do anything else.
+api_status_code="$(curl -o /dev/null -L -s -w "%{http_code}\n" "${host}:${radarr_port}/api/${radarr_api_version}/system/status?apikey=${radarr_api_key}")"
+
+if [[ "${api_status_code}" != '200' ]]; then
+	printf '\n%s\n\n' " There is a problem with your Radarr API Configuration. Make sure you have set them all correctly first."
+	exit 1
+fi
 ## logging ##############################################################################################################
 # Do no set an extension so that we can use log or json extensions per command using a generic &>> "${log_name}.log/json
 [[ -z "${radarr_movie_path}" ]] && log_name="${config_dir}/deletarr" || log_name="${config_dir}/${radarr_movie_path##*/}"
@@ -70,7 +78,7 @@ if ! jq --version &> "${log_name}.log"; then
 	case "$(arch)" in
 		x86_64) arch="x86_64-linux-musl.tar.gz" ;;
 		aarch64) arch="aarch64-linux-musl.tar.gz" ;;
-		armhf | armv7*) arch="armv7r-linux-musleabihf.tar.gz" ;;
+		armhf | armv7*) arch="armv7l-linux-musleabihf.tar.gz" ;;
 		armel | armv5* | armv6* | arm) arch="arm-linux-musleabihf" ;;
 		*)
 			echo "$(arch): This arch is not supported"
@@ -97,8 +105,8 @@ if [[ "${1}" == "bootstrap" ]]; then
 		mkdir -p "${data_dir}/${movie_path##*/}"                                                           # create the data dir using this path
 		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${movie_path##*/}/movie_info" # save all info for this movie to the data dir for this movie
 
-		printf '%s' "${movie_info_array[$movie]}" | jq -r '.alternateTitles[].movieId' | head -n 1 > "${data_dir}/${movie_path##*/}/movie_id"   # save the id to a file so i can easily get it when i need it.
-		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.alternateTitles[].movieId' | head -n 1)"                                # get the movieId for this film that we will use to get the unique history
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.id' > "${data_dir}/${movie_path##*/}/movie_id"                                      # save the id to a file so i can easily get it when i need it.
+		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.id')"                                                                   # get the movieId for this film that we will use to get the unique history
 		jq ".[] | select(.movieId==${movie_id})" "${log_name}_radarr_history.json" 2> /dev/null > "${data_dir}/${movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
 	done
 
