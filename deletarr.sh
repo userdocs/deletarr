@@ -16,6 +16,27 @@ set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 ## connection test ############################
 [[ "${radarr_eventtype:=}" == 'Test' ]] && exit
 
+# https://wiki.servarr.com/radarr/settings#connections
+#
+# https://github.com/Radarr/Radarr/blob/f890aadffa5ae579bcf65abdcf3e3948837084a9/src/NzbDrone.Core/Notifications/CustomScript/CustomScript.cs
+#
+# example: radarr_eventtype=Test
+#
+# event types + Connection Triggers - explanation
+#
+# Test - Test button - used to check connection test works.
+# Grab - On Grab - Be notified when movies are available for download and has been sent to a download client
+# Download - On Import - Be notified when movies are successfully imported
+# Download - On Upgrade - Be notified when movies are upgraded to a better quality
+# Rename - On Rename - Be notified when movies are renamed
+# MovieAdded - On Movie Added - Be notified when movies are added to Radarr's library to manage or monitor
+# MovieFileDelete - On Movie File Delete - Be notified when movies files are deleted
+# MovieFileDelete - On Movie File Delete For Upgrade - Be notified when movie files are deleted for upgrades
+# MovieDelete - On Movie Delete - Be notified when movies are deleted
+# HealthIssue -# On Health Issue - Be notified on health check failures - Include Health Warnings - Be notified on health warnings in addition to errors.
+# ApplicationUpdate - On Application Update - Be notified when Radarr gets updated to a new version
+#
+
 ## Env Configuration ####################################################################################################################################################
 config_dir="${HOME}/.config/deletarr"               # set the config directory
 data_dir="${HOME}/.deletarr"                        #locationof movie data folders and files
@@ -93,26 +114,23 @@ if ! jq --version &> "${log_name}.log"; then
 fi
 
 ## bootstrapping - Radarr API calls ########################################################################################################################################################################
-# Dump the entire history into a json we can use to get the hashes we need
 if [[ "${1}" == "bootstrap" ]]; then
-	# dump the entire history file to work with directly.
-	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history?page=1&pageSize=99999&sortDirection=descending&sortKey=date&apikey=${radarr_api_key}" | jq '.[]' &> "${log_name}_radarr_history.json"
-	_pipe_status
-
-	# get all movies and set them as compacted json in an array. We will search this for our loop instread of call the api over and over
+	# set history to an array that we are going to loop over 10 to 1000s of times, to avoid spamming the API
+	mapfile -t radarr_history < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history?page=1&pageSize=99999&sortDirection=descending&sortKey=date&apikey=${radarr_api_key}" | jq '.[]')
+	# get all movies and set them as compacted json in an array. We will search this for our loop instread of call the API over and over
 	mapfile -t movie_info_array < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie?apikey=${radarr_api_key}" | jq -c '.[]')
 
 	for movie in "${!movie_info_array[@]}"; do
-		radarr_movie_path="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.path')"                          # get the path and set it to radarr_movie_path
-		mkdir -p "${data_dir}/${radarr_movie_path##*/}"                                                           # create the data dir using this path
-		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info" # save all info for this movie to the data dir for this movie
-
-		printf '%s' "${movie_info_array[$movie]}" | jq -r '.id' > "${data_dir}/${radarr_movie_path##*/}/movie_id"                                      # save the id to a file so i can easily get it when i need it.
-		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.id')"                                                                          # get the movieId for this film that we will use to get the unique history
-		jq ".[] | select(.movieId==${movie_id})" "${log_name}_radarr_history.json" 2> /dev/null > "${data_dir}/${radarr_movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
+		radarr_movie_path="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.path')"                                                                     # get the path and set it to radarr_movie_path
+		mkdir -p "${data_dir}/${radarr_movie_path##*/}"                                                                                                      # create the data dir using this path
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info"                                            # save all info for this movie to the data dir for this movie
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.id' > "${data_dir}/${radarr_movie_path##*/}/movie_id"                                            # save the id to a file so i can easily get it when i need it.
+		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.id')"                                                                                # get the movieId for this film that we will use to get the unique history
+		printf '%s' "${radarr_history[@]}" | jq -r ".[] | select(.movieId==${movie_id})" 2> /dev/null > "${data_dir}/${radarr_movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
+		jq -r ".downloadId" "${data_dir}/${radarr_movie_path##*/}/movie_history" | uniq > "${data_dir}/${radarr_movie_path##*/}/movie_hashes"                # get all unique download hashes from history and set to a file
 	done
 
-	printf '\n%s\n' "History dumped to: ${log_name}_radarr_history.json"
+	printf '\n%s\n' "History per movie was dumped to the ${data_dir} for each unique film"
 	printf '\n%s\n\n' "Movie folders created in ${data_dir} with unique movie info and history jsons per dir"
 	exit
 fi
