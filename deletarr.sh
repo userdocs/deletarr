@@ -16,14 +16,14 @@ set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 ## connection test ############################
 [[ "${radarr_eventtype:=}" == 'Test' ]] && exit
 
-## Env Configuration ######################################################################################################################################
+## Env Configuration ####################################################################################################################################################
 config_dir="${HOME}/.config/deletarr"               # set the config directory
 data_dir="${HOME}/.deletarr"                        #locationof movie data folders and files
 mkdir -p "${config_dir}"                            # make config dirs for logs and history json
 mkdir -p "${data_dir}"                              # make data folder for movie folders
 PATH="${data_dir}/bin:${HOME}/bin${PATH:+:${PATH}}" # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
 
-## Configuration #####################################################################################################################################
+## Configuration #########################################################################################
 # You can load these settings from the ~/.config/deletarr/config if it exists otherwise use these defaults
 if [[ -f "${HOME}/.config/deletarr/config" ]]; then
 	# shellcheck source=/dev/null
@@ -37,22 +37,24 @@ else
 	qbt_api_version="v2" # api version used
 	category="radarr"    # your downloader category here - WIP to find a better way to determine this
 
-	## Radarr API Configuration #####################
-	radarr_port="7878"
-	radarr_api_version="v3"
-	radarr_api_key=""
+	## Radarr API Configuration ###################
+	radarr_port="7878"      # set your port here
+	radarr_api_version="v3" # api version used
+	radarr_api_key=""       # set your API key here
 fi
 
-## Testing - Safety #########################################################################################################
-# Make sure the API responds before we do anything else.
+## Testing - Safety ######################################################################################################################################
+# Make sure the Radarr API responds before we do anything else or there is no point in the script continuing.
 api_status_code="$(curl -o /dev/null -L -s -w "%{http_code}\n" "${host}:${radarr_port}/api/${radarr_api_version}/system/status?apikey=${radarr_api_key}")"
 
 if [[ "${api_status_code}" != '200' ]]; then
-	printf '\n%s\n\n' " There is a problem with your Radarr API Configuration. Make sure you have set them all correctly first."
+	printf '\n%s\n\n' " There is a problem with your Radarr API Configuration settings. Make sure you have all variables correctly."
 	exit 1
 fi
-## logging ##############################################################################################################
+
+## logging #############################################################################################################
 # Do no set an extension so that we can use log or json extensions per command using a generic &>> "${log_name}.log/json
+# This will create a log file in ~/.config/deletarr and either use the default main log or create a movie specific log.
 [[ -z "${radarr_movie_path}" ]] && log_name="${config_dir}/deletarr" || log_name="${config_dir}/${radarr_movie_path##*/}"
 
 ## Testing - error function #################################################################################################################################################################################
@@ -72,7 +74,7 @@ _pipe_status() {
 	return                                           # if there were no problems we simply return to the main scrpt and do nothing.
 }
 
-## get jq ################################################################################################################################################################################################################################################################
+## get jq #################################################################################################################################################################################################################################################
 # Will download jq if the command is not detected in the PATH. Otherwise it just logs the version output.
 if ! jq --version &> "${log_name}.log"; then
 	case "$(arch)" in
@@ -94,20 +96,20 @@ fi
 # Dump the entire history into a json we can use to get the hashes we need
 if [[ "${1}" == "bootstrap" ]]; then
 	# dump the entire history file to work with directly.
-	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history?page=1&pageSize=99999&sortDirection=descending&sortKey=date&apikey=${radarr_api_key}" | jq '.[]' &>> "${log_name}_radarr_history.json"
+	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history?page=1&pageSize=99999&sortDirection=descending&sortKey=date&apikey=${radarr_api_key}" | jq '.[]' &> "${log_name}_radarr_history.json"
 	_pipe_status
 
 	# get all movies and set them as compacted json in an array. We will search this for our loop instread of call the api over and over
 	mapfile -t movie_info_array < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie?apikey=${radarr_api_key}" | jq -c '.[]')
 
 	for movie in "${!movie_info_array[@]}"; do
-		movie_path="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.path')"                          # get the path and set it to movie_path
-		mkdir -p "${data_dir}/${movie_path##*/}"                                                           # create the data dir using this path
-		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${movie_path##*/}/movie_info" # save all info for this movie to the data dir for this movie
+		radarr_movie_path="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.path')"                          # get the path and set it to radarr_movie_path
+		mkdir -p "${data_dir}/${radarr_movie_path##*/}"                                                           # create the data dir using this path
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info" # save all info for this movie to the data dir for this movie
 
-		printf '%s' "${movie_info_array[$movie]}" | jq -r '.id' > "${data_dir}/${movie_path##*/}/movie_id"                                      # save the id to a file so i can easily get it when i need it.
-		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.id')"                                                                   # get the movieId for this film that we will use to get the unique history
-		jq ".[] | select(.movieId==${movie_id})" "${log_name}_radarr_history.json" 2> /dev/null > "${data_dir}/${movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.id' > "${data_dir}/${radarr_movie_path##*/}/movie_id"                                      # save the id to a file so i can easily get it when i need it.
+		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.id')"                                                                          # get the movieId for this film that we will use to get the unique history
+		jq ".[] | select(.movieId==${movie_id})" "${log_name}_radarr_history.json" 2> /dev/null > "${data_dir}/${radarr_movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
 	done
 
 	printf '\n%s\n' "History dumped to: ${log_name}_radarr_history.json"
@@ -115,11 +117,13 @@ if [[ "${1}" == "bootstrap" ]]; then
 	exit
 fi
 
-## on grab #####
+if [[ "${radarr_eventtype:=}" == 'MovieAdded' ]]; then
+	mkdir -p "${data_dir}/${radarr_movie_path##*/}"
+	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie/$radarr_movie_id?apikey=${radarr_api_key}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info"
+	printf '%s' "${radarr_movie_id}" > "${data_dir}/${radarr_movie_path##*/}/movie_id"
+fi
 
-## on import ####
-
-## Testing - Safety #########################################################################################
+## Testing - Safety ####################################################################################################################
 # if the radarr_movie_path variable is not set - then exit now else log the variable info
 if [[ -z "${radarr_movie_path}" ]]; then
 	printf '\n%s\n\n' "radarr_movie_path is null so it's unsafe not proceed, exiting now with status code 1" |& tee -a "${log_name}.log"
@@ -164,7 +168,7 @@ fi
 mapfile -t combined_hash_array < <(printf '%s\n' "${radarr_download_id_array[@]}" "${torrent_hash_array[@]}" | awk '!a[$0]++')
 
 ## logging ##############################################################################
-printf '\n%s\n\n' "combined_hash_array = ${combined_hash_array[*]}" &>> "${log_name}.log"
+printf '\n%s\n' "combined_hash_array = ${combined_hash_array[*]}" &>> "${log_name}.log"
 
 ## Hash processing loops ##########################
 for torrent_hash in "${combined_hash_array[@]}"; do
@@ -175,7 +179,7 @@ for torrent_hash in "${combined_hash_array[@]}"; do
 
 	## Testing - Safety ######################################################################################
 	if [[ -z "${hash_to_delete}" ]]; then # safety - if this variable is not set - then exit now
-		printf '\n%s\n\n' "hash_to_delete is null so it's unsafe not proceed, exiting now with status code 1" |& tee -a "${log_name}.log"
+		printf '\n%s\n' "hash_to_delete is null so it's unsafe not proceed, exiting now with status code 1" |& tee -a "${log_name}.log"
 		exit 1
 	fi
 
