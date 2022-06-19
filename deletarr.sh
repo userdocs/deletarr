@@ -16,6 +16,23 @@ set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 ## connection test ############################
 [[ "${radarr_eventtype:=}" == 'Test' ]] && exit
 
+## Testing - error function #################################################################################################################################################################################
+# This is a function that detects the PIPESTATUS errors for any element in a single or piped command and will show you the exit status code as well as the index position of the error in the pipe in the log
+_pipe_status() {
+	return_code=("${PIPESTATUS[@]}")            # set pipestatus to an array now or it will be reset by any new command or action taken.
+	return_location=-1                          # set the count start point to -1. An array index starts from 0 so we make sure the first count increment starts at 0 so it matches the location of the error
+	unset return_code_outcome                   # unset this to make sure it clear/unset when the function is called so we don't auto exit when using the function
+	for return_code in "${return_code[@]}"; do  # loop through the return_code array.
+		return_location="$((return_location + 1))" # start the count, starting from 0 so we get 0,0 > 0,1 > 0,2 and so on.
+		if [[ "${return_code}" -gt '0' ]]; then    # If any indexed value in the array returns as a non 0 number do this.
+			printf '\n%s\n\n' "Pipestatus returned an error at position: ${return_location} with return code: ${return_code}" |& tee -a "${log_name}.log"
+			return_code_outcome='1' # set this variable to exit at the end of the function so we can see all errors in the pipe instead of exiting at the first one.
+		fi
+	done
+	[[ "${return_code_outcome}" -eq '1' ]] && exit 1 # if there was any error in the pipe then exit now instead of returning.
+	return                                           # if there were no problems we simply return to the main scrpt and do nothing.
+}
+
 # https://wiki.servarr.com/radarr/settings#connections
 #
 # https://github.com/Radarr/Radarr/blob/f890aadffa5ae579bcf65abdcf3e3948837084a9/src/NzbDrone.Core/Notifications/CustomScript/CustomScript.cs
@@ -78,23 +95,6 @@ fi
 # This will create a log file in ~/.config/deletarr and either use the default main log or create a movie specific log.
 [[ -z "${radarr_movie_path}" ]] && log_name="${config_dir}/deletarr" || log_name="${config_dir}/${radarr_movie_path##*/}"
 
-## Testing - error function #################################################################################################################################################################################
-# This is a function that detects the PIPESTATUS errors for any element in a single or piped command and will show you the exit status code as well as the index position of the error in the pipe in the log
-_pipe_status() {
-	return_code=("${PIPESTATUS[@]}")            # set pipestatus to an array now or it will be reset by any new command or action taken.
-	return_location=-1                          # set the count start point to -1. An array index starts from 0 so we make sure the first count increment starts at 0 so it matches the location of the error
-	unset return_code_outcome                   # unset this to make sure it clear/unset when the function is called so we don't auto exit when using the function
-	for return_code in "${return_code[@]}"; do  # loop through the return_code array.
-		return_location="$((return_location + 1))" # start the count, starting from 0 so we get 0,0 > 0,1 > 0,2 and so on.
-		if [[ "${return_code}" -gt '0' ]]; then    # If any indexed value in the array returns as a non 0 number do this.
-			printf '\n%s\n\n' "Pipestatus returned an error at position: ${return_location} with return code: ${return_code}" |& tee -a "${log_name}.log"
-			return_code_outcome='1' # set this variable to exit at the end of the function so we can see all errors in the pipe instead of exiting at the first one.
-		fi
-	done
-	[[ "${return_code_outcome}" -eq '1' ]] && exit 1 # if there was any error in the pipe then exit now instead of returning.
-	return                                           # if there were no problems we simply return to the main scrpt and do nothing.
-}
-
 ## get jq #################################################################################################################################################################################################################################################
 # Will download jq if the command is not detected in the PATH. Otherwise it just logs the version output.
 if ! jq --version &> "${log_name}.log"; then
@@ -121,24 +121,22 @@ if [[ "${1}" == "bootstrap" ]]; then
 	mapfile -t movie_info_array < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie?apikey=${radarr_api_key}" | jq -c '.[]')
 
 	for movie in "${!movie_info_array[@]}"; do
-		radarr_movie_path="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.path')"                                                                     # get the path and set it to radarr_movie_path
-		mkdir -p "${data_dir}/${radarr_movie_path##*/}"                                                                                                      # create the data dir using this path
-		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info"                                            # save all info for this movie to the data dir for this movie
-		printf '%s' "${movie_info_array[$movie]}" | jq -r '.id' > "${data_dir}/${radarr_movie_path##*/}/movie_id"                                            # save the id to a file so i can easily get it when i need it.
-		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.id')"                                                                                # get the movieId for this film that we will use to get the unique history
-		printf '%s' "${radarr_history[@]}" | jq -r ".[] | select(.movieId==${movie_id})" 2> /dev/null > "${data_dir}/${radarr_movie_path##*/}/movie_history" # search the history json for the film history and save to a film in the data dir for this movie
-		jq -r ".downloadId" "${data_dir}/${radarr_movie_path##*/}/movie_history" | uniq > "${data_dir}/${radarr_movie_path##*/}/movie_hashes"                # get all unique download hashes from history and set to a file
+		radarr_movie_path="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.path')"                                                                                            # get the path and set it to radarr_movie_path
+		mkdir -p "${data_dir}/${radarr_movie_path##*/}"                                                                                                                             # create the data dir using this path
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info"                                                                   # save all info for this movie to the data dir for this movie
+		printf '%s' "${movie_info_array[$movie]}" | jq -r '.id' > "${data_dir}/${radarr_movie_path##*/}/movie_id"                                                                   # save the id to a file so i can easily get it when i need it.
+		movie_id="$(printf '%s' "${movie_info_array[$movie]}" | jq -r '.id')"                                                                                                       # get the movieId for this film that we will use to get the unique history
+		printf '%s' "${radarr_history[@]}" | jq -r ".[] | select(.movieId==${movie_id})" 2> /dev/null > "${data_dir}/${radarr_movie_path##*/}/movie_history"                        # search the history json for the film history and save to a film in the data dir for this movie
+		jq -r '.downloadId | select( . != null )' "${data_dir}/${radarr_movie_path##*/}/movie_history" 2> /dev/null | sort -u > "${data_dir}/${radarr_movie_path##*/}/movie_hashes" # get all unique download hashes from history and set to a file
 	done
 
-	printf '\n%s\n' "History per movie was dumped to the ${data_dir} for each unique film"
-	printf '\n%s\n\n' "Movie folders created in ${data_dir} with unique movie info and history jsons per dir"
-	exit
-fi
+	printf '\n%s\n\n' " Movie folders created in ${data_dir} with movie specific info dumped to files."
+	printf '\n%s\n' " movie_hashes - Any unique torrent hashes stored in the history for that film"
+	printf '\n%s\n' " movie_history - The history of all downloads and activity - this is purged when you remove a film from Radarr"
+	printf '\n%s\n' " movie_id - The numerical id of the film in the json to get film specific info"
+	printf '\n%s\n\n' " movie_info - The genral information about the movie dumped to a file"
 
-if [[ "${radarr_eventtype:=}" == 'MovieAdded' ]]; then
-	mkdir -p "${data_dir}/${radarr_movie_path##*/}"
-	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie/$radarr_movie_id?apikey=${radarr_api_key}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info"
-	printf '%s' "${radarr_movie_id}" > "${data_dir}/${radarr_movie_path##*/}/movie_id"
+	exit
 fi
 
 ## Testing - Safety ####################################################################################################################
@@ -152,10 +150,19 @@ fi
 
 ## Radarr API calls ##################################################################################################################################################################################################################################
 # Get any download hashes from the movie history via the radarr_movie_id and set them to an array
-[[ -n "${radarr_movie_id}" ]] && mapfile -t radarr_download_id_array < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history/movie?movieId=${radarr_movie_id}&apikey=${radarr_api_key}" | jq -r '.[].downloadId | select( . != null )')
+[[ -n "${radarr_movie_id}" ]] && mapfile -t radarr_download_id_array < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history/movie?movieId=${radarr_movie_id}&apikey=${radarr_api_key}" | jq -r '.[].downloadId | select( . != null )' | sort -nu)
 
 ## logging ##############################################################################################
-printf '\n%s\n' "Radar download_id history hashes = ${radarr_download_id_array[*]}" &>> "${log_name}.log"
+printf '\n%s\n' "Radarr download_id history hashes = ${radarr_download_id_array[*]}" &>> "${log_name}.log"
+
+################################################################################################################################################
+# radarr_eventtype MovieAdded
+################################################################################################################################################
+if [[ "${radarr_eventtype:=}" == 'MovieAdded' ]]; then
+	mkdir -p "${data_dir}/${radarr_movie_path##*/}"
+	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie/$radarr_movie_id?apikey=${radarr_api_key}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info"
+	printf '%s' "${radarr_movie_id}" > "${data_dir}/${radarr_movie_path##*/}/movie_id"
+fi
 
 ## Movie name processing ############################################################################################################
 # Processing - File names and special characters from radarr_movie_path are converted to a regex to match all potential torrents
@@ -181,9 +188,12 @@ else
 	torrent_hash_array=()
 fi
 
+## logging ##############################################################################################
+printf '\n%s\n' "qBittorrent torrent_hash_array hashes = ${torrent_hash_array[*]}" &>> "${log_name}.log"
+
 ## Array processing ###############################################################################################################
 # We want to combine the radrr api output with the qbt api output to create a single list of deduplictaed hashes we want to process
-mapfile -t combined_hash_array < <(printf '%s\n' "${radarr_download_id_array[@]}" "${torrent_hash_array[@]}" | awk '!a[$0]++')
+mapfile -t combined_hash_array < <(printf '%s\n' "${radarr_download_id_array[@]}" "${torrent_hash_array[@]}" | sort -nu)
 
 ## logging ##############################################################################
 printf '\n%s\n' "combined_hash_array = ${combined_hash_array[*]}" &>> "${log_name}.log"
