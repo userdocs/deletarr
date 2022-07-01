@@ -69,13 +69,13 @@ _pipe_status() {
 }
 
 ## Env Configuration ####################################################################################################################################################
-debug="off"                                         #
-config_dir="${HOME}/.config/deletarr"               # set the config directory
-data_dir="${HOME}/.deletarr"                        # location of the movie data folders and files
-mkdir -p "${config_dir}"                            # make config dirs for logs and history json
-mkdir -p "${data_dir}"                              # make data folder for movie folders
-mkdir -p "${data_dir}/${radarr_movie_path##*/}"     #
-PATH="${data_dir}/bin:${HOME}/bin${PATH:+:${PATH}}" # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
+debug="off"                                                                        # Debug on = print trigger envs to log
+config_dir="${HOME}/.config/deletarr"                                              # set the config directory
+data_dir="${HOME}/.deletarr"                                                       # location of the movie data folders and files
+mkdir -p "${config_dir}"                                                           # make config dirs for logs and history json
+mkdir -p "${data_dir}"                                                             # make data folder for movie folders
+[[ -z "${radarr_movie_path}" ]] && mkdir -p "${data_dir}/${radarr_movie_path##*/}" # make data folder for triggered movie folders
+PATH="${data_dir}/bin:${HOME}/bin${PATH:+:${PATH}}"                                # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
 
 ## logging #####################################################################################################################################
 # Do no set an extension so that we can use log or json extensions per command using a generic &>> "${log_name}.log/json
@@ -187,8 +187,18 @@ printf '\n%s\n' "Radarr download_id history hashes = ${radarr_download_id_array[
 # radarr_eventtype MovieAdded
 ################################################################################################################################################
 if [[ "${radarr_eventtype:=}" == 'MovieAdded' ]]; then
-	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie/$radarr_movie_id?apikey=${radarr_api_key}" | jq -r '.' > "${data_dir}/${radarr_movie_path##*/}/movie_info"
-	printf '%s' "${radarr_movie_id}" > "${data_dir}/${radarr_movie_path##*/}/movie_id"
+	curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/movie/$radarr_movie_id?apikey=${radarr_api_key}" | jq -r '.' >> "${data_dir}/${radarr_movie_path##*/}/movie_info"
+	printf '%s' "${radarr_movie_id}" >> "${data_dir}/${radarr_movie_path##*/}/movie_id"
+	exit
+fi
+
+################################################################################################################################################
+# radarr_eventtype Grab
+################################################################################################################################################
+if [[ "${radarr_eventtype:=}" == 'Grab' ]]; then
+	mapfile -t radarr_history < <(curl -sL "${host}:${radarr_port}/api/${radarr_api_version}/history?page=1&pageSize=99999&sortDirection=descending&sortKey=date&apikey=${radarr_api_key}" | jq '.[]')
+	printf '%s' "${radarr_history[@]}" | jq -r ".[] | select(.movieId==${radarr_movie_id})" 2> /dev/null >> "${data_dir}/${radarr_movie_path##*/}/movie_history"
+	jq -r '.downloadId | select( . != null )' "${data_dir}/${radarr_movie_path##*/}/movie_history" 2> /dev/null | sort -u >> "${data_dir}/${radarr_movie_path##*/}/movie_hashes"
 	exit
 fi
 
