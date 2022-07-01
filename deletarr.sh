@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 ###############################################################################################################################################################################
 set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 ###############################################################################################################################################################################
@@ -35,7 +36,6 @@ set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 # HealthIssue       - On Health Issue                  - Be notified on health check failures - Include Health Warnings - Be notified on health warnings in addition to errors.
 # ApplicationUpdate - On Application Update            - Be notified when Radarr gets updated to a new version
 ###############################################################################################################################################################################
-###############################################################################################################################################################################
 
 ###############################################################################################################################################################################
 # Color me up Scotty - define some color values to use as variables in the scripts.
@@ -58,8 +58,8 @@ _pipe_status() {
 	local i                                     # localise this variable
 	local return_code='0'                       # localise this variable and set a default value to 0
 
-	for i in "${!saved_pipestatus[@]}"; do         # loop through the return_code array.
-		if [[ "${saved_pipestatus[i]}" -ne 0 ]]; then # if the index value is greater than 0 then do this
+	for i in "${!saved_pipestatus[@]}"; do           # loop through the return_code array.
+		if [[ "${saved_pipestatus[i]}" -ne '0' ]]; then # if the index value is greater than 0 then do this
 			printf '\n%s\n\n' "Pipestatus returned an error at position: ${i} with return code: ${saved_pipestatus[i]}" |& tee -a "${log_name}.log"
 			return_code='1' # set the return code to 1 so the function will exit from pipe_status || exit
 		fi
@@ -74,7 +74,7 @@ config_dir="${HOME}/.config/deletarr"                                           
 data_dir="${HOME}/.deletarr"                                                       # location of the movie data folders and files
 mkdir -p "${config_dir}"                                                           # make config dirs for logs and history json
 mkdir -p "${data_dir}"                                                             # make data folder for movie folders
-[[ -z "${radarr_movie_path}" ]] && mkdir -p "${data_dir}/${radarr_movie_path##*/}" # make data folder for triggered movie folders
+[[ -n "${radarr_movie_path}" ]] && mkdir -p "${data_dir}/${radarr_movie_path##*/}" # make data folder for triggered movie folders
 PATH="${data_dir}/bin:${HOME}/bin${PATH:+:${PATH}}"                                # Set the path so that jq will work if it did not exist or bin was not in the PATH the first time the script executes
 
 ## logging #####################################################################################################################################
@@ -137,7 +137,7 @@ if ! jq --version &>> "${log_name}.log"; then
 			;;
 	esac
 	wget -q -O- "https://github.com/userdocs/jq-crossbuild/releases/latest/download/${arch}" | tar -xz --strip-components 1 -C "${data_dir}" jq-completed/bin/jq &>> "${log_name}.log" # download the the jq Linux binary and place it in the bin directory
-	_pipe_status                                                                                                                                                                       # error testing
+	_pipe_status || exit 1                                                                                                                                                             # error testing
 	chmod 700 "${data_dir}/bin/jq"                                                                                                                                                     # make the binary executable to the relative user.
 fi
 
