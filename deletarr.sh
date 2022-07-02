@@ -4,9 +4,14 @@
 set -a # https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
 ###############################################################################################################################################################################
 
+## connection test ############################################################################################################################################################
+# When you test the connection this will trigger and exit with a 0 exit code providing a successful test. This should be the first thing the script does.
+[[ "${radarr_eventtype:=}" == 'Test' ]] && exit
+
 ###############################################################################################################################################################################
-# In Radarr you create a Settings/connection/Custom Script named deletarr and select only On Movie Delete
+# In Radarr you create a Settings/connection/Custom Script named deletarr and choose all triggers except Health Issue and Application update.
 # Then you set the path to this script - Testing will just return a success with an exit code 0 - the script does nothing on this test
+# Wheneveer onf of those if triggered it is save filem specific infmoration to the ~/.deletarr/film_name/ folder.
 # Now when you delete a movie and the file it will trigger the script and do one of two things
 # Delete Movie only - This will just trigger the script to log the basic info about the movie and list available torrents to delete in the ~/.deletarr/movie_name.log
 # Delete Movie and Movie files and folders - The script will log movie info and also try to delete the torrents and their files via the API - if this was uncommented.
@@ -47,10 +52,6 @@ UNDERLINE=$(tput smul)
 NORMAL=$(tput sgr0)
 ###############################################################################################################################################################################
 
-## connection test ############################################################################################################################################################
-# When you test the connection this will trigger and exit with a 0 exit code providing a successful test. This should be the first thing the script does.
-[[ "${radarr_eventtype:=}" == 'Test' ]] && exit
-
 ## Testing - error function #################################################################################################################################################################################
 # This is a function that detects the PIPESTATUS errors for any element in a single or piped command and will show you the exit status code as well as the index position of the error in the pipe in the log
 _pipe_status() {
@@ -58,13 +59,18 @@ _pipe_status() {
 	local i                                     # localise this variable
 	local return_code='0'                       # localise this variable and set a default value to 0
 
-	for i in "${!saved_pipestatus[@]}"; do           # loop through the return_code array.
-		if [[ "${saved_pipestatus[i]}" -ne '0' ]]; then # if the index value is greater than 0 then do this
-			printf '\n%s\n\n' "Pipestatus returned an error at position: ${i} with return code: ${saved_pipestatus[i]}" |& tee -a "${log_name}.log"
-			return_code='1' # set the return code to 1 so the function will exit from pipe_status || exit
+	# loop through the return_code array index positions and not their values.
+	for i in "${!saved_pipestatus[@]}"; do
+		# Check the values of the looped index value to see if it is greater than 0, then do this
+		if [[ "${saved_pipestatus[i]}" -ne '0' ]]; then
+			# log the error and their position to the log file
+			printf '%s\n' "Pipestatus returned an error at position: ${i} with return code: ${saved_pipestatus[i]}" &>> "${log_name}.log"
+			# set the return code to 1 so the function will exit from pipe_status || exit
+			return_code='1'
 		fi
 	done
 
+	# Set this return code to 0 or 1 depending on the outcome of the loop
 	return "${return_code}" # set the return code based on the existence of any errors in the loop
 }
 
